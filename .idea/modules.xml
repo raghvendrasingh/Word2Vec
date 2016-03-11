@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="ProjectModuleManager">
+    <modules>
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/DropOutNeuralNet_dev.iml" filepath="$PROJECT_DIR$/.idea/modules/DropOutNeuralNet_dev.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/DropOutNeuralNet_dev-build.iml" filepath="$PROJECT_DIR$/.idea/modules/DropOutNeuralNet_dev-build.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/corenlp_dev.iml" filepath="$PROJECT_DIR$/.idea/modules/corenlp_dev.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/corenlp_dev-build.iml" filepath="$PROJECT_DIR$/.idea/modules/corenlp_dev-build.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/neuralnetworkutility.iml" filepath="$PROJECT_DIR$/.idea/modules/neuralnetworkutility.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/neuralnetworkutility-build.iml" filepath="$PROJECT_DIR$/.idea/modules/neuralnetworkutility-build.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/utility.iml" filepath="$PROJECT_DIR$/.idea/modules/utility.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/utility-build.iml" filepath="$PROJECT_DIR$/.idea/modules/utility-build.iml" />
+    </modules>
+  </component>
+</project>
