@@ -53,11 +53,13 @@ class Word2Vec {
       bufferedSource = Source.fromFile(trainingFile)
       for (line <- bufferedSource.getLines()) {
         /** Get all words in a sentence in form */
-        val wordList = coreNLP.tokenizeParagraph(line)
+        //val wordList = coreNLP.tokenizeParagraph(line)
         /** Get all words without any punctuation and digits in them */
-        val validWordList = Utility.getValidWordList(wordList)
+        //val validWordList = Utility.getValidWordList(wordList)
+        val validWordList = line.split(" ").map(x => x.trim)
         validWordList foreach {
           word => {
+            println(word)
             if (!wordFrequencyMap.contains(word)) wordFrequencyMap += ((word,(1,"")))
             else  wordFrequencyMap += (  (  word,(wordFrequencyMap(word)._1+1,"")  )  )
           }
@@ -156,19 +158,24 @@ class Word2Vec {
 
   private def buildBinaryHuffmanTree(): Unit = {
     println("Started Building Binary Huffman Tree")
-    var oldList = ListBuffer[HuffmanNode]()
-    for (item <- wordFrequencyMap) oldList += HuffmanNode(List[Double](), null, null, item._1)
-    while(oldList.size != 1) {
-      var newList = ListBuffer[HuffmanNode]()
-      var i = 0
-      while (i < oldList.size - 1) {
-        newList += HuffmanNode(Utility.getRandomDoublesInRange(0, maxRandVal, embeddingDimension), oldList(i), oldList(i + 1), "")
-        i = i + 2
+    try {
+      var oldList = ListBuffer[HuffmanNode]()
+      for (item <- wordFrequencyMap) oldList += HuffmanNode(List[Double](), null, null, item._1)
+      while (oldList.size != 1) {
+        var newList = ListBuffer[HuffmanNode]()
+        var i = 0
+        while (i < oldList.size - 1) {
+          newList += HuffmanNode(Utility.getRandomDoublesInRange(0, maxRandVal, embeddingDimension), oldList(i), oldList(i + 1), "")
+          i = i + 2
+        }
+        if (i == oldList.size - 1) newList += oldList(i)
+        oldList = newList
       }
-      if (i == oldList.size - 1) newList += oldList(i)
-      oldList = newList
+      if (oldList.size == 1) rootHuffman = oldList.head
+    } catch {
+      case ex: Exception => println(s"Unexpected execution error while executing method buildBinaryHuffmanTree()",ex)
+        throw ex
     }
-    if (oldList.size == 1) rootHuffman = oldList.head
   }
 
 
@@ -185,6 +192,11 @@ class Word2Vec {
   }
 
   private def assignHuffmanCodeToWords(): Unit = {
+    println("Started assigning binary codes to leaf nodes in Binary Huffman tree.")
+    if (rootHuffman == null) {
+      println("HUffman tree root is not initialized when assigning binary codes to leaf nodes in Huffman tree.")
+      throw new Exception("HUffman tree root is not initialized when assigning binary codes to leaf nodes in Huffman tree.")
+    }
     assignHuffmanCodeToWordsUtil(rootHuffman, "")
   }
 
@@ -235,19 +247,24 @@ class Word2Vec {
   private def updateHiddenOutputWeigtsHierarchicalSoftmax(hiddenVec: List[Double],  targetWord: String): List[Double] = {
     var root = rootHuffman
     var deltaHidden = List.fill(hiddenVec.size)(0.0)
-    for (char <- wordFrequencyMap(targetWord)._2) {
-      var newRoot: HuffmanNode = null
-      val temp = Utility.dotProductLists(root.outputWordVec, hiddenVec)
-      var temp1 = 1.0/(1 + math.exp(temp))
-      if (char == '0') {
-        temp1 = temp1 - 1.0
-        newRoot = root.left
-      } else newRoot = root.right
-      val temp2 = Utility.multiplyScalarToList(hiddenVec, learningRate * temp1)
-      val temp3 = Utility.multiplyScalarToList(root.outputWordVec, temp1)
-      deltaHidden = Utility.addLists(temp3, deltaHidden)
-      root.outputWordVec = Utility.subtractLists(root.outputWordVec, temp2)
-      root = newRoot
+    try {
+      for (char <- wordFrequencyMap(targetWord)._2) {
+        var newRoot: HuffmanNode = null
+        val temp = Utility.dotProductLists(root.outputWordVec, hiddenVec)
+        var temp1 = 1.0 / (1 + math.exp(temp))
+        if (char == '0') {
+          temp1 = temp1 - 1.0
+          newRoot = root.left
+        } else newRoot = root.right
+        val temp2 = Utility.multiplyScalarToList(hiddenVec, learningRate * temp1)
+        val temp3 = Utility.multiplyScalarToList(root.outputWordVec, temp1)
+        deltaHidden = Utility.addLists(temp3, deltaHidden)
+        root.outputWordVec = Utility.subtractLists(root.outputWordVec, temp2)
+        root = newRoot
+      }
+    } catch {
+      case ex: Exception => println(s"Unexpected execution error while executing method updateHiddenOutputWeigtsHierarchicalSoftmax()",ex)
+        throw ex
     }
     deltaHidden
   }
@@ -394,14 +411,17 @@ class Word2Vec {
     try {
       /** Build a Binary Huffman Tree */
       buildBinaryHuffmanTree()
+      println("Successfully built Binary Huffman tree.")
       /** Assign a code to each word in wordFrequencyMap by traversing the Binary Huffman Tree */
       assignHuffmanCodeToWords()
+      println("Successfully assigned binary codes to leaf nodes in Binary Huffman tree.")
       bufferedSource = Source.fromFile(trainingFile)
       for (line <- bufferedSource.getLines()) {
         /** Get all words in a sentence in form */
-        val wordList = coreNLP.tokenizeParagraph(line)
+        //val wordList = coreNLP.tokenizeParagraph(line)
         /** Get all words without any punctuation and digits in them */
-        val validWordList = Utility.getValidWordList(wordList)
+        //val validWordList = Utility.getValidWordList(wordList)
+        val validWordList = line.split(" ").map(x => x.trim)
         for (word <- validWordList if wordFrequencyMap.contains(word)) {
           /** Prepare a context list having last word as target word */
           if(contextList.size < contextSize+1) {
@@ -443,7 +463,7 @@ class Word2Vec {
     }catch {
       case ex: FileNotFoundException => println(s"Could not find file ${trainingFile}")
       case ex: IOException => println(s"Had an IOException while trying to read file ${trainingFile}")
-      case ex: Exception => println("Unexpected execution error while executing method trainWord2Vec()", ex)
+      case ex: Exception => println("Unexpected execution error while executing method trainWord2VecHierarchicalSoftmax()", ex)
     } finally {
       if (bufferedSource != null) bufferedSource.close()
     }
@@ -519,9 +539,4 @@ object ExecuteWord2Vec extends App {
   println("Started saving word vectors to disk...")
   obj.saveWordVectors()
   println("Successfully saved word vectors to disk.")
-  /*val coreNLP = new NLP
-  val wordList = coreNLP.tokenizeParagraph("rama is going to market by his bicycle.")
-  println("word list is = "+wordList)
-  val validWordList = Utility.getValidWordList(wordList)
-  println("valid word list is = "+validWordList)*/
 }
