@@ -24,8 +24,10 @@ class Word2Vec {
     * the clean training text corpus
     */
   val maxVocabSize = 30000000
-  /** This is a mutable HashMap with key as a word and value as word's vector */
-  val wordEmbeddings = HashMap[String, (Int,List[Double])]()
+  /** This is a mutable HashMap with key as a word and value as a tuple with first element as word index and
+    * second element as word's vector
+    */
+  var wordEmbeddings = HashMap[String, (Int,List[Double])]()
   /** This is a mutable HashMap with key as word and value as its frequency in clean training text corpus */
   var wordFrequencyMap = HashMap[String,(Int,String)]()
   /** This is the maximum value of the standard deviation in Normal distribution */
@@ -37,14 +39,23 @@ class Word2Vec {
   /** This is the count of unique words in a clean training text corpus */
   var vocabSize = 0
   /** This is the learning rate used in gradient descent algorithm */
-  val learningRate = 0.025
+  var learningRate = 0.025
   /** This is the root node of the binary Huffman tree */
   var rootHuffman: HuffmanNode = null
   /** This is a flag to choose hierarchical softmax vs general softmax */
   var isHierarchicalSoftmax = 1
+  /** This variable gives the number of top k similar vectors we want for an input vector */
+  val numSimilarVectors = 5
+  /** Number of iterations */
+  val iterations = 6
+  /** Parameters for RMSProp */
+  var cacheOut = List.fill(embeddingDimension)(0.0)
+  var cacheIn = List.fill(embeddingDimension)(0.0)
+  var decayRate = 0.9
 
-
-
+  /** This method creates a map with key as word and value as its frequency in the text file. This method also removes
+    * all those words whose frequency is less than minFrequency parameter set above. Finally it saves the serialized map
+    * to disk. */
   def createVocabFromTrainingFile(): Unit = {
     println("Creating word frequency map from training corpus.")
     val coreNLP = new NLP
@@ -53,10 +64,10 @@ class Word2Vec {
       bufferedSource = Source.fromFile(trainingFile)
       for (line <- bufferedSource.getLines()) {
         /** Get all words in a sentence in form */
-        //val wordList = coreNLP.tokenizeParagraph(line)
+        val wordList = coreNLP.tokenizeParagraph(line)
         /** Get all words without any punctuation and digits in them */
-        //val validWordList = Utility.getValidWordList(wordList)
-        val validWordList = line.split(" ").map(x => x.trim)
+        val validWordList = Utility.getValidWordList(wordList)
+        //val validWordList = line.split(" ").map(x => x.trim)
         validWordList foreach {
           word => {
             println(word)
@@ -67,7 +78,7 @@ class Word2Vec {
       }
       if (minFrequency > 0) reduceVocab()
       vocabSize = wordFrequencyMap.size
-      saveVocab()
+      Utility.saveObject(wordFrequencyMap, "word_frequencies.ser")
     }catch {
       case ex: FileNotFoundException => println(s"Could not find file ${trainingFile}")
       case ex: IOException => println(s"Had an IOException while trying to read file ${trainingFile}")
@@ -77,6 +88,9 @@ class Word2Vec {
     }
   }
 
+  /** This method deletes all those words from wordFrequencyMap whose frequency is less than minFrequency parameter
+    * set above
+    */
   private def reduceVocab(): Unit = {
     try {
       for (item <- wordFrequencyMap) {
@@ -88,22 +102,8 @@ class Word2Vec {
     }
   }
 
-  private def saveVocab(): Unit = {
-    var fos: FileOutputStream = null
-    var oos: ObjectOutputStream = null
-    try {
-      fos = new FileOutputStream("word_frequencies.ser")
-      oos = new ObjectOutputStream(fos)
-      oos.writeObject(wordFrequencyMap)
-    } catch {
-      case ex: Exception => println(s"Unexpected execution error while executing method saveVocab()",ex)
-        throw ex
-    } finally {
-      if (fos != null) fos.close()
-      if (oos != null) oos.close()
-    }
-  }
 
+  /** This method initializes wordFrequencyMap object from its serialized form stored in disk. */
   def initializeVocabFromDisk(): Unit = {
     var fis: FileInputStream = null
     var ois: ObjectInputStream = null
@@ -121,6 +121,9 @@ class Word2Vec {
     }
   }
 
+  /** This method initializes the embeddings which are basically the word vector matrix and hidden layer to output
+    * layer matrix by random values between 0 and maxRandVal parameter set above.
+    */
   def initializeEmbeddings(): Unit = {
     try {
       /** Initialize the word embeddings of size |vocabSize| X |embeddingDimension| */
@@ -143,6 +146,12 @@ class Word2Vec {
   }
 
 
+  /** This method takes a list of words and returns the average value of the word vectors corresponding to each word.
+    * The returned value is also a vector.
+    *
+    * @param context - List of words.
+    * @return - Returns the average value of the word vectors corresponding to each word.
+    */
   private def getAvgContext(context: ListBuffer[String]): List[Double] = {
     var result =  List[Double]()
     /** get actual context by removing the target word */
@@ -156,6 +165,8 @@ class Word2Vec {
     }
   }
 
+
+  /** This method builds the binary huffman tree used for hierarchical softmax training of wordToVec. */
   private def buildBinaryHuffmanTree(): Unit = {
     println("Started Building Binary Huffman Tree")
     try {
@@ -179,6 +190,12 @@ class Word2Vec {
   }
 
 
+  /** This method is a helper method which assigns a binary huffman code to each of its leaf node. Leaf nodes are
+    * basically a word in the vocab.
+    *
+    * @param root - Root node of the huffman tree.
+    * @param code - code for the leaf node.
+    */
   private def assignHuffmanCodeToWordsUtil(root: HuffmanNode, code: String): Unit = {
     if (root != null) {
       if (root.left == null && root.right == null) {
@@ -191,17 +208,23 @@ class Word2Vec {
     }
   }
 
+  /** This method assigns a binary huffman code to each of its leaf node. Leaf nodes are basically a word in the vocab. */
   private def assignHuffmanCodeToWords(): Unit = {
     println("Started assigning binary codes to leaf nodes in Binary Huffman tree.")
     if (rootHuffman == null) {
-      println("HUffman tree root is not initialized when assigning binary codes to leaf nodes in Huffman tree.")
-      throw new Exception("HUffman tree root is not initialized when assigning binary codes to leaf nodes in Huffman tree.")
+      println("Huffman tree root is not initialized when assigning binary codes to leaf nodes in Huffman tree.")
+      throw new Exception("Huffman tree root is not initialized when assigning binary codes to leaf nodes in Huffman tree.")
     }
     assignHuffmanCodeToWordsUtil(rootHuffman, "")
   }
 
 
-
+  /** This method multiplies the hidden vector to the hidden layer to output layer matrix and also calculates the
+    * maximum value in the resultant vector.
+    *
+    * @param hiddenVec - Hidden layer vector.
+    * @return - Returns the output vector and maximum value in the output vector.
+    */
   private def multiply(hiddenVec: List[Double]): (List[Double],Double) = {
     assert(hiddenVec.size == hiddenOutputEmbeddings(0).size)
     var result = ListBuffer[Double]()
@@ -220,9 +243,18 @@ class Word2Vec {
     }
   }
 
+  /** This method returns the normalizing factor
+    *
+    * @param maxVal - Maximum value in the output vector.
+    * @param output - Output vector which is unnormalized.
+    * @return - Returns the normalizing factor.
+    */
   private def getNormalizingFactor(maxVal: Double, output: List[Double]): Double = {
     var result = 0.0
     try {
+      /** maxVal is subtracted from each output vector element to avoid numerical errors or blowing off the exponential
+        * value.
+        */
       for (i <- output.indices) result = result + math.exp(output(i) - maxVal)
       result
     } catch {
@@ -231,6 +263,14 @@ class Word2Vec {
     }
   }
 
+  /** This method returns the a tuple of 3 elements.
+    * 1) An output vector.
+    * 2) Max value in this vector.
+    * 3) Normalizing factor for this vector.
+    *
+    * @param hiddenVec - Hidden layer vector.
+    * @return
+    */
   private def getSoftMaxOutput(hiddenVec: List[Double]): (List[Double], Double, Double) = {
     val result = multiply(hiddenVec)
     assert(result._1.size == vocabSize)
@@ -244,22 +284,35 @@ class Word2Vec {
   }
 
 
-  private def updateHiddenOutputWeigtsHierarchicalSoftmax(hiddenVec: List[Double],  targetWord: String): List[Double] = {
+  /** This method updates the weight matrix between hidden layer and output layer. Uses RMS prop for optimizing the
+    * cost function. Refer http://cs231n.github.io/neural-networks-3/ for more details.
+    *
+    * @param hiddenVec - Hidden layer vector.
+    * @param targetWord - Following word for a given context.
+    * @return - Returns the back propagation error at the hidden layer.
+    */
+  private def updateHiddenOutputWeightsHierarchicalSoftmax(hiddenVec: List[Double],  targetWord: String): List[Double] = {
     var root = rootHuffman
     var deltaHidden = List.fill(hiddenVec.size)(0.0)
     try {
       for (char <- wordFrequencyMap(targetWord)._2) {
         var newRoot: HuffmanNode = null
         val temp = Utility.dotProductLists(root.outputWordVec, hiddenVec)
-        var temp1 = 1.0 / (1 + math.exp(temp))
+        var temp1 = 1.0 / (1 + math.exp(-1*temp))
         if (char == '0') {
           temp1 = temp1 - 1.0
           newRoot = root.left
         } else newRoot = root.right
-        val temp2 = Utility.multiplyScalarToList(hiddenVec, learningRate * temp1)
+        /** Use RMS prop for adaptive learning rate. Refer http://cs231n.github.io/neural-networks-3/ for more details. */
+        /** Use the equation cache = decay_rate * cache + (1 - decay_rate) * dx**2 to update the cache */
+        val dx = Utility.multiplyScalarToList(hiddenVec, temp1)
+        cacheOut = Utility.addLists(Utility.multiplyScalarToList(cacheOut, decayRate), Utility.multiplyScalarToList(dx map {x => math.pow(x,2)}, 1 - decayRate) )
         val temp3 = Utility.multiplyScalarToList(root.outputWordVec, temp1)
         deltaHidden = Utility.addLists(temp3, deltaHidden)
-        root.outputWordVec = Utility.subtractLists(root.outputWordVec, temp2)
+        /** Use the equation x += - learning_rate * dx / (np.sqrt(cache) + eps) for updating the outputWordVec */
+        val newdx = Utility.divideListsElementWise(dx, cacheOut map {x => math.sqrt(x)})
+        val update = Utility.multiplyScalarToList(newdx, learningRate)
+        root.outputWordVec = Utility.subtractLists(root.outputWordVec, update)
         root = newRoot
       }
     } catch {
@@ -270,6 +323,15 @@ class Word2Vec {
   }
 
 
+  /** This method updates the weights between the hidden layer and the output layer.
+    *
+    * @param output - It is a tuple of 3 elements.
+    * 1) An output vector.
+    * 2) Max value in this vector.
+    * 3) Normalizing factor for this vector.
+    * @param hiddenVec - Hidden layer vector.
+    * @param targetWord - word following the context.
+    */
   private def updateHiddenOutputWeights(output: (List[Double],Double,Double), hiddenVec: List[Double], targetWord: String): Unit = {
     val tempOut = output._1
     val maxVal = output._2
@@ -288,6 +350,15 @@ class Word2Vec {
     }
   }
 
+  /** This method calculates the back propagation error at the hidden layer.
+    *
+    * @param output - It is a tuple of 3 elements.
+    * 1) An output vector.
+    * 2) Max value in this vector.
+    * 3) Normalizing factor for this vector.
+    * @return - Returns back propagation error at the hidden layer. It is a product of output layer error vector and
+    *         hidden layer to output layer weight matrix.s
+    */
   private def getDeltaHidden(output: (List[Double],Double,Double)): List[Double] = {
     var result = ListBuffer[Double]()
     val tempOut = output._1
@@ -307,13 +378,23 @@ class Word2Vec {
     }
   }
 
+  /** Use RMS prop for adaptive learning rate. Refer http://cs231n.github.io/neural-networks-3/ for more details.
+    *
+    * @param deltaHidden - Back propagation error vector at hidden layer.
+    * @param contextList - List of context words. It is also a training example.
+    */
+
   private def updateInputHiddenWeights(deltaHidden: List[Double], contextList: ListBuffer[String]): Unit = {
     val numContexts = contextList.size-1
     assert(contextSize == numContexts)
     try {
       for (i <- 0 to numContexts - 1) {
         val tup = wordEmbeddings(contextList(i))
-        val update = Utility.multiplyScalarToList(deltaHidden, learningRate / contextSize)
+        /** Use the equation cache = decay_rate * cache + (1 - decay_rate) * dx**2 to update the cache */
+        cacheIn = Utility.addLists(Utility.multiplyScalarToList(cacheIn, decayRate), Utility.multiplyScalarToList(deltaHidden map {x => math.pow(x,2)}, 1 - decayRate) )
+        /** Use the equation x += - learning_rate * dx / (np.sqrt(cache) + eps) for updating the outputWordVec */
+        val newdx = Utility.divideListsElementWise(deltaHidden, cacheIn map {x => math.sqrt(x)})
+        val update = Utility.multiplyScalarToList(newdx, learningRate / contextSize)
         wordEmbeddings(contextList(i)) = (tup._1, Utility.subtractLists(tup._2, update))
       }
     } catch {
@@ -322,6 +403,87 @@ class Word2Vec {
     }
   }
 
+
+  /** Given an input vector this method returns the index and distance of the maximum dissimilar vector. Distance is
+    * measured as cosine distance.
+    *
+    * @param vecInp - Input vector.
+    * @param result - A list of vectors.
+    * @return
+    */
+  private def getIndexAndDistOfMaxDissimilarVector(vecInp: List[Double], result: ListBuffer[List[Double]]): (Int, Double) = {
+    var ind = -1
+    var dist = Double.MinValue
+    try {
+      for (i <- result.indices) {
+        val cosineDist = NNUtils.getCosineDistance(vecInp, result(i))
+        if (cosineDist > dist) {
+          dist = cosineDist
+          ind = i
+        }
+      }
+    }  catch {
+      case ex: Exception => println(s"Unexpected execution error while executing method getIndexOfMaxDissimilarVector()",ex)
+        throw ex
+    }
+    (ind,dist)
+  }
+
+
+  /** This method initializes the weight matrices from their serialized form in the disk.
+    *
+    * @param fileName - File name of the serialized matrix.
+    */
+  private def initializeEmbeddingsFromDisk(fileName: String): Unit = {
+    var fis: FileInputStream = null
+    var ois: ObjectInputStream = null
+    try {
+      fis = new FileInputStream(fileName)
+      ois = new ObjectInputStream(fis)
+      wordEmbeddings = ois.readObject().asInstanceOf[HashMap[String, (Int,List[Double])]]
+    } catch {
+      case ex: Exception => println(s"Unexpected execution error while executing method initializeEmbeddingsFromDisk()",ex)
+        throw ex
+    } finally {
+      if (fis != null) fis.close()
+      if (ois != null) ois.close()
+    }
+  }
+
+  /** This method returns the numSimilarVectors number of similar words to to the passed word.
+    *
+    * @param word - A word for which this method returns similar words.
+    * @return - Returns similar words.
+    */
+  def getSimilarVectors(word: String): ListBuffer[String] = {
+    var res = ListBuffer[List[Double]]()
+    var result = ListBuffer[String]()
+    try {
+      initializeEmbeddingsFromDisk("word_vectors.ser")
+      for (item <- wordEmbeddings) {
+        if (res.size < numSimilarVectors) {
+          res = res :+ item._2._2
+          result = result :+ item._1
+        }
+        else {
+          val (ind,dist) = getIndexAndDistOfMaxDissimilarVector(wordEmbeddings(word)._2, res)
+          if (ind != -1) {
+            val cosineDist = NNUtils.getCosineDistance(wordEmbeddings(word)._2, item._2._2)
+            if (cosineDist < dist) {
+              res(ind) = item._2._2
+              result(ind) = item._1
+            }
+          }
+        }
+      }
+    } catch {
+      case ex: Exception => println(s"Unexpected execution error while executing method getSimilarVectors()",ex)
+        throw ex
+    }
+    result
+  }
+
+  /** This method trains WordToVec by normal method. */
   def trainWord2Vec(): Unit = {
     val coreNLP = new NLP
     var bufferedSource: BufferedSource = null
@@ -403,62 +565,69 @@ class Word2Vec {
     }
   }
 
-
+  /** This method trains WordToVec using hierarchical softmax. */
   def trainWord2VecHierarchicalSoftmax(): Unit = {
-    val coreNLP = new NLP
+    //val coreNLP = new NLP
     var bufferedSource: BufferedSource = null
     var contextList = ListBuffer[String]()
     try {
       /** Build a Binary Huffman Tree */
       buildBinaryHuffmanTree()
       println("Successfully built Binary Huffman tree.")
+
       /** Assign a code to each word in wordFrequencyMap by traversing the Binary Huffman Tree */
       assignHuffmanCodeToWords()
       println("Successfully assigned binary codes to leaf nodes in Binary Huffman tree.")
-      bufferedSource = Source.fromFile(trainingFile)
-      for (line <- bufferedSource.getLines()) {
-        /** Get all words in a sentence in form */
-        //val wordList = coreNLP.tokenizeParagraph(line)
-        /** Get all words without any punctuation and digits in them */
-        //val validWordList = Utility.getValidWordList(wordList)
-        val validWordList = line.split(" ").map(x => x.trim)
-        for (word <- validWordList if wordFrequencyMap.contains(word)) {
-          /** Prepare a context list having last word as target word */
-          if(contextList.size < contextSize+1) {
-            contextList = contextList :+ word
-          } else if (contextList.size == contextSize+1) {
-            if (debugMode == 1) {
-              println()
-              println("ContextList is=")
-              println()
-              println(contextList)
-              println("+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
-            }
-            /** Forward Phase */
-            val avgContextVector = getAvgContext(contextList)
-            if (debugMode == 1) {
-              println()
-              println("Avg. Context Vector is=")
-              println()
-              println(avgContextVector)
-              println("+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
-            }
-            /** Backward Phase */
+      for (iter <- 1 to iterations) {
+        /** Initialize cacheIn and cacheOut */
+        cacheOut = List.fill(embeddingDimension)(0.0)
+        cacheIn = List.fill(embeddingDimension)(0.0)
+        bufferedSource = Source.fromFile(trainingFile)
+        for (line <- bufferedSource.getLines()) {
+          /** Get all words in a sentence in form */
+          //val wordList = coreNLP.tokenizeParagraph(line)
+          /** Get all words without any punctuation and digits in them */
+          //val validWordList = Utility.getValidWordList(wordList)
+          val validWordList = line.split(" ").map(x => x.trim)
+          for (word <- validWordList if wordFrequencyMap.contains(word)) {
+            /** Prepare a context list having last word as target word */
+            if (contextList.size < contextSize + 1) {
+              contextList = contextList :+ word
+            } else if (contextList.size == contextSize + 1) {
+              if (debugMode == 1) {
+                println()
+                println("ContextList is=")
+                println()
+                println(contextList)
+                println("+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
+              }
+              /** Forward Phase */
+              val avgContextVector = getAvgContext(contextList)
+              if (debugMode == 1) {
+                println()
+                println("Avg. Context Vector is=")
+                println()
+                println(avgContextVector)
+                println("+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
+              }
+              /** Backward Phase */
 
-            val deltaHidden = updateHiddenOutputWeigtsHierarchicalSoftmax(avgContextVector, contextList.last)
-            updateInputHiddenWeights(deltaHidden, contextList)
-            if (debugMode == 1) {
-              println()
-              println("word embeddings is=")
-              println()
-              println(wordEmbeddings)
-              println("+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
+              val deltaHidden = updateHiddenOutputWeightsHierarchicalSoftmax(avgContextVector, contextList.last)
+              updateInputHiddenWeights(deltaHidden, contextList)
+              if (debugMode == 1) {
+                println()
+                println("word embeddings is=")
+                println()
+                println(wordEmbeddings)
+                println("+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
+              }
+              contextList.remove(0)
+              contextList = contextList :+ word
+              if (debugMode == 1) println("**************************__________________*******************__________________*****************")
             }
-            contextList.remove(0)
-            contextList = contextList :+ word
-            if (debugMode == 1) println("**************************__________________*******************__________________*****************")
           }
         }
+        println(s"Iteration $iter is done.")
       }
     }catch {
       case ex: FileNotFoundException => println(s"Could not find file ${trainingFile}")
@@ -468,75 +637,66 @@ class Word2Vec {
       if (bufferedSource != null) bufferedSource.close()
     }
   }
-
-  def saveWordVectors(): Unit = {
-    var fos: FileOutputStream = null
-    var oos: ObjectOutputStream = null
-    try {
-      fos = new FileOutputStream("word_vectors.ser")
-      oos = new ObjectOutputStream(fos)
-      oos.writeObject(wordEmbeddings)
-    } catch {
-      case ex: Exception => println(s"Unexpected execution error while executing method saveWordVectors()",ex)
-        throw ex
-    } finally {
-      if (fos != null) fos.close()
-      if (oos != null) oos.close()
-    }
-  }
-
 }
 
 object ExecuteWord2Vec extends App {
   val obj = new Word2Vec
   var startTime = 0L
   var endTime = 0L
-  if (new java.io.File("word_frequencies.ser").exists) {
-    startTime = System.nanoTime()
-    obj.initializeVocabFromDisk()
-    endTime = System.nanoTime()
-    println("Successfully initialized word frequency map from word frequency map stored in disk.")
-    println("Time taken to initialize word frequency map from word frequency map stored in disk = "+ (endTime-startTime)/(math.pow(10,9)*60) + "minutes")
-  }
-  else {
-    startTime = System.nanoTime()
-    obj.createVocabFromTrainingFile()
-    endTime = System.nanoTime()
-    println("Successfully created word frequency map from training corpus.")
-    println("Time taken to create word frequency map from training corpus = "+ (endTime-startTime)/(math.pow(10,9)*60) + "minutes")
+  if (! new java.io.File("word_vectors.ser").exists) {
+    if (new java.io.File("word_frequencies.ser").exists) {
+      startTime = System.nanoTime()
+      obj.initializeVocabFromDisk()
+      endTime = System.nanoTime()
+      println("Successfully initialized word frequency map from word frequency map stored in disk.")
+      println("Time taken to initialize word frequency map from word frequency map stored in disk = " + (endTime - startTime) / (math.pow(10, 9) * 60) + "minutes")
+    }
+    else {
+      startTime = System.nanoTime()
+      obj.createVocabFromTrainingFile()
+      endTime = System.nanoTime()
+      println("Successfully created word frequency map from training corpus.")
+      println("Time taken to create word frequency map from training corpus = " + (endTime - startTime) / (math.pow(10, 9) * 60) + "minutes")
+    }
+
+    if (obj.debugMode == 1) {
+      println("WordFrequencyMap is=")
+      println()
+      println(obj.wordFrequencyMap)
+      println("+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
+      println()
+      println("vocab size is = " + obj.vocabSize)
+      println("+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
+    }
+
+    obj.initializeEmbeddings()
+    if (obj.debugMode == 1) {
+      println("wordEmbeddings is=")
+      println()
+      println(obj.wordEmbeddings)
+      println("+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
+      println()
+      println("HiddenOutputEmbeddings is=")
+      println()
+      println(obj.hiddenOutputEmbeddings)
+      println("+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
+    }
+    println("Started training Word2Vec....")
+    val startTrainingTime = System.nanoTime()
+    if (obj.isHierarchicalSoftmax == 1) obj.trainWord2VecHierarchicalSoftmax()
+    else obj.trainWord2Vec()
+    val endTrainingTime = System.nanoTime()
+    println("Time taken to train Word2Vec = " + (endTrainingTime - startTrainingTime) / (math.pow(10, 9) * 60) + "minutes")
+    println("Successfully trained Word2Vec model.")
+
+    println("Started saving word vectors to disk...")
+    Utility.saveObject(obj.wordEmbeddings, "word_vectors.ser")
+    println("Successfully saved word vectors to disk.")
   }
 
-  if(obj.debugMode == 1) {
-    println("WordFrequencyMap is=")
-    println()
-    println(obj.wordFrequencyMap)
-    println("+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
-    println()
-    println("vocab size is = "+obj.vocabSize)
-    println("+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
-  }
 
-  obj.initializeEmbeddings()
-  if(obj.debugMode == 1) {
-    println("wordEmbeddings is=")
-    println()
-    println(obj.wordEmbeddings)
-    println("+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
-    println()
-    println("HiddenOutputEmbeddings is=")
-    println()
-    println(obj.hiddenOutputEmbeddings)
-    println("+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
-  }
-  println("Started training Word2Vec....")
-  val startTrainingTime = System.nanoTime()
-  if (obj.isHierarchicalSoftmax == 1) obj.trainWord2VecHierarchicalSoftmax()
-  else obj.trainWord2Vec()
-  val endTrainingTime = System.nanoTime()
-  println("Time taken to train Word2Vec = "+ (endTrainingTime-startTrainingTime)/(math.pow(10,9)*60) + "minutes")
-  println("Successfully trained Word2Vec model.")
-
-  println("Started saving word vectors to disk...")
-  obj.saveWordVectors()
-  println("Successfully saved word vectors to disk.")
+  val word = "prime"
+  println(s"Similar vectors to $word are = ")
+  val simWords = obj.getSimilarVectors(word)
+  for (word <- simWords) println(word)
 }
